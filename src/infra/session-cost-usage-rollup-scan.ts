@@ -120,6 +120,23 @@ export function createUsageRollupScan(params: UsageCostRollupScanInput & { appen
   };
 }
 
+/** Retain navigation and usage contributions without keeping decoded message payloads. */
+export function projectUsageCostTranscriptRecord(event: unknown): Record<string, unknown> & {
+  usageEntry: ParsedTranscriptEntry | null;
+} {
+  const record: Record<string, unknown> & { usageEntry: ParsedTranscriptEntry | null } = {
+    usageEntry: isRecord(event) ? parseUsageCostTranscriptRecord(event) : null,
+  };
+  if (isRecord(event)) {
+    for (const key of ["type", "id", "parentId", "targetId", "appendParentId", "appendMode"]) {
+      if (Object.hasOwn(event, key)) {
+        record[key] = event[key];
+      }
+    }
+  }
+  return record;
+}
+
 /** Memory snapshots are immutable; no post-scan source probe or database lease is needed. */
 export async function scanMemoryUsageCostRollup(params: {
   file: UsageCostTranscriptFile;
@@ -127,13 +144,19 @@ export async function scanMemoryUsageCostRollup(params: {
   pricingFingerprint: string;
   resolveCosts: UsageCostRollupScanInput["resolveCosts"];
 }): Promise<UsageCostRollupEntry> {
-  const records = params.events.map(({ eventJson }): unknown => JSON.parse(eventJson));
+  let anchorHash = sha256Base64Url("");
+  const records = params.events.map(({ eventJson }, index) => {
+    const event: unknown = JSON.parse(eventJson);
+    if (index === params.events.length - 1) {
+      anchorHash = hashUsageCostCheckpointEvent(event);
+    }
+    return projectUsageCostTranscriptRecord(event);
+  });
   const scan = createUsageRollupScan({ ...params, appendOnly: false });
   await scan.addEntries(
-    selectVisibleTranscriptEvents(records).flatMap((record) => {
-      const entry = isRecord(record) ? parseUsageCostTranscriptRecord(record) : null;
-      return entry ? [entry] : [];
-    }),
+    selectVisibleTranscriptEvents(records).flatMap((record) =>
+      record.usageEntry ? [record.usageEntry] : [],
+    ),
   );
   const visibleLeafId = scanSessionTranscriptTree(records).leafId;
   return scan.finish({
@@ -142,8 +165,7 @@ export async function scanMemoryUsageCostRollup(params: {
     eventCount: params.file.eventCount ?? 0,
     size: params.file.size,
     mtimeMs: params.file.mtimeMs,
-    anchorHash:
-      records.length > 0 ? hashUsageCostCheckpointEvent(records.at(-1)) : sha256Base64Url(""),
+    anchorHash,
     ...(visibleLeafId ? { visibleLeafId } : {}),
   });
 }
