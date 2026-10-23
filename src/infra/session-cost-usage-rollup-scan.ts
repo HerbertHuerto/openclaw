@@ -121,7 +121,6 @@ export function createUsageRollupScan(params: UsageCostRollupScanInput & { appen
   };
 }
 
-
 /** Memory snapshots are immutable; no post-scan source probe or database lease is needed. */
 export async function scanMemoryUsageCostRollup(params: {
   file: UsageCostTranscriptFile;
