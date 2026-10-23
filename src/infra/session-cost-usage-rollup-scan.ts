@@ -1,6 +1,7 @@
 import type { ModelCostConfig } from "@openclaw/llm-core";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { projectTranscriptNavigationFields } from "../config/sessions/transcript-navigation-fields.js";
 import { scanSessionTranscriptTree } from "../config/sessions/transcript-tree.js";
 import { selectVisibleTranscriptEvents } from "../config/sessions/transcript-visible-events.js";
 import { sha256Base64Url } from "./crypto-digest.js";
@@ -120,22 +121,6 @@ export function createUsageRollupScan(params: UsageCostRollupScanInput & { appen
   };
 }
 
-/** Retain navigation and usage contributions without keeping decoded message payloads. */
-export function projectUsageCostTranscriptRecord(event: unknown): Record<string, unknown> & {
-  usageEntry: ParsedTranscriptEntry | null;
-} {
-  const record: Record<string, unknown> & { usageEntry: ParsedTranscriptEntry | null } = {
-    usageEntry: isRecord(event) ? parseUsageCostTranscriptRecord(event) : null,
-  };
-  if (isRecord(event)) {
-    for (const key of ["type", "id", "parentId", "targetId", "appendParentId", "appendMode"]) {
-      if (Object.hasOwn(event, key)) {
-        record[key] = event[key];
-      }
-    }
-  }
-  return record;
-}
 
 /** Memory snapshots are immutable; no post-scan source probe or database lease is needed. */
 export async function scanMemoryUsageCostRollup(params: {
@@ -150,7 +135,14 @@ export async function scanMemoryUsageCostRollup(params: {
     if (index === params.events.length - 1) {
       anchorHash = hashUsageCostCheckpointEvent(event);
     }
-    return projectUsageCostTranscriptRecord(event);
+    const record: Record<string, unknown> & { usageEntry: ParsedTranscriptEntry | null } = {
+      usageEntry: null,
+    };
+    if (isRecord(event)) {
+      record.usageEntry = parseUsageCostTranscriptRecord(event);
+      projectTranscriptNavigationFields(event, record);
+    }
+    return record;
   });
   const scan = createUsageRollupScan({ ...params, appendOnly: false });
   await scan.addEntries(

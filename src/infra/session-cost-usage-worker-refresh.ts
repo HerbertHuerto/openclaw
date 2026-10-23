@@ -1,10 +1,12 @@
 import fs from "node:fs";
 import type { ModelCostConfig } from "@openclaw/llm-core";
 import { safeParseJsonRecord } from "@openclaw/normalization-core/json-coercion";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import {
   parseSqliteSessionFileMarker,
   type SqliteSessionFileMarker,
 } from "../config/sessions/legacy-sqlite-marker.js";
+import { projectTranscriptNavigationFields } from "../config/sessions/transcript-navigation-fields.js";
 import {
   isCanonicalSessionTranscriptEntry,
   isSessionTranscriptLeafControl,
@@ -14,10 +16,7 @@ import { selectVisibleTranscriptEvents } from "../config/sessions/transcript-vis
 import { sha256Base64Url } from "./crypto-digest.js";
 import { parseUsageCostTranscriptRecord } from "./session-cost-usage-pricing.js";
 import type { UsageCostRollupEntry } from "./session-cost-usage-rollup-codec.js";
-import {
-  createUsageRollupScan,
-  projectUsageCostTranscriptRecord,
-} from "./session-cost-usage-rollup-scan.js";
+import { createUsageRollupScan } from "./session-cost-usage-rollup-scan.js";
 import type { ParsedTranscriptEntry, UsageCostTranscriptFile } from "./session-cost-usage.types.js";
 
 /** Reuse resolved model prices across the bounded pages of one worker operation. */
@@ -290,7 +289,13 @@ async function scanSqliteUsageRollup(params: RollupScanInput): Promise<UsageCost
         throw new Error(`SQLite transcript changed while scanning: ${params.file.filePath}`);
       }
       for (const { seq, event } of page) {
-        const record: UsageRecord = { seq, ...projectUsageCostTranscriptRecord(event) };
+        const record: UsageRecord = {
+          seq,
+          usageEntry: isRecord(event) ? parseUsageCostTranscriptRecord(event) : null,
+        };
+        if (isRecord(event)) {
+          projectTranscriptNavigationFields(event, record);
+        }
         if (seq === maxSeq) {
           anchorHash = sqliteCheckpointAnchorHash(event);
         }
